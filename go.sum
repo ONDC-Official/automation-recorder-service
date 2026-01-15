@@ -1,3 +1,5 @@
+github.com/ONDC-Official/automation-beckn-onix v1.4.0 h1:JpRvy+xv6BmANWgjTbb7Y1cs1yU+YPAObdxiF8kT7qM=
+github.com/ONDC-Official/automation-beckn-onix v1.4.0/go.mod h1:lBRFNN3iwo+UQCq2+r3ZWuBDfNk/gbfXXjalnTUPG5I=
 github.com/alicebob/miniredis/v2 v2.35.0 h1:QwLphYqCEAo1eu1TqPRN2jgVMPBweeQcR21jeqDCONI=
 github.com/alicebob/miniredis/v2 v2.35.0/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj6OXMm/+iu5cLMM=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=

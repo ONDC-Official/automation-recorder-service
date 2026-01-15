@@ -4,7 +4,7 @@ go 1.24.0
 
 // require github.com/beckn-one/beckn-onix v0.0.0-00010101000000-000000000000
 
-replace github.com/beckn-one/beckn-onix => /Users/rudranshsinghal/ondc/automation-utility/official-code/bekn-onix/beckn-onix
+replace github.com/beckn-one/beckn-onix => github.com/ONDC-Official/automation-beckn-onix v1.4.0
 
 replace google.golang.org/protobuf => google.golang.org/protobuf v1.32.0
 
