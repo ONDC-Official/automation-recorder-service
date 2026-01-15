@@ -1,54 +1,33 @@
-# Stage 1: Build the Go application
-FROM golang:1.22-alpine AS builder
+# syntax=docker/dockerfile:1
 
-# Install build dependencies
+FROM golang:alpine AS builder
+
 RUN apk add --no-cache git ca-certificates tzdata
 
-# Set working directory
 WORKDIR /app
 
-# Copy go mod files
+# Cache dependencies
 COPY go.mod go.sum ./
+RUN go mod download && go mod verify
 
-# Download dependencies
-RUN go mod download
+# Build args for metadata
+ARG VERSION=dev
+ARG COMMIT=unknown
 
-# Copy source code
+# Copy and build
 COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT}" \
+    -o automation-recorder .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o automation-recorder .
+# Minimal runtime
+FROM gcr.io/distroless/static-debian12
 
-# Stage 2: Create minimal runtime image
-FROM alpine:latest
+COPY --from=builder /app/automation-recorder /
+COPY --from=builder /app/.env.example /.env.example
 
-# Install ca-certificates for HTTPS calls
-RUN apk --no-cache add ca-certificates tzdata
-
-# Create non-root user for security
-RUN addgroup -g 1000 appuser && \
-    adduser -D -u 1000 -G appuser appuser
-
-WORKDIR /app
-
-# Copy binary from builder
-COPY --from=builder /app/automation-recorder .
-
-# Copy .env.example as template (optional)
-COPY --from=builder /app/.env.example .
-
-# Change ownership to non-root user
-RUN chown -R appuser:appuser /app
-
-# Switch to non-root user
-USER appuser
-
-# Expose ports (adjust based on your config)
 EXPOSE 8089 8090
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8090/health || exit 1
+USER nonroot:nonroot
 
-# Run the application
-CMD ["./automation-recorder"]
+ENTRYPOINT ["/automation-recorder"]

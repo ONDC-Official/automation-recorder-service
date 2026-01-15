@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  automation-recorder:
+    build:
+      context: .
+      dockerfile: dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+        COMMIT: ${COMMIT:-local}
+    ports:
+      - "8089:8089"
+      - "8090:8090"
+    env_file:
+      - .env
+    restart: unless-stopped

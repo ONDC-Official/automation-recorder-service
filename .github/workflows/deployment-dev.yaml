@@ -1,0 +1,138 @@
+name: Dev Deployment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+jobs:
+  ssh-ec2:
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: https://github.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: SSH Setup and Cloning Repository
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ./key.pem
+          chmod 600 ./key.pem
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} -T <<EOF
+          REPO_DIR=~/ONDC-automation-framework/automation-recorder-service
+          echo "Removing existing repository directory if exists"
+          rm -rf \$REPO_DIR
+          echo "Cloning repository from main branch"
+          git clone --single-branch --branch main https://github.com/ONDC-Official/automation-recorder-service.git \$REPO_DIR
+          EOF
+
+      - name: Install Docker Compose (if not installed)
+        run: |
+          ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
+          # Check if Docker Compose is installed
+          if ! command -v docker-compose &> /dev/null
+          then
+            echo "Docker Compose not found. Installing..."
+            sudo curl -L "https://github.com/docker/compose/releases/download/$(curl -s https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+            sudo chmod +x /usr/local/bin/docker-compose
+          else
+            echo "Docker Compose is already installed."
+          fi
+          EOF
+      - name: Write secrets to .env on EC2
+        run: |
+          echo "Writing secrets to .env file"
+          ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
+          REPO_DIR=~/ONDC-automation-framework/automation-recorder-service
+          echo "Writing environment variables to .env file"
+          echo "RECORDER_LISTEN_ADDR=:8089" > \$REPO_DIR/.env
+          echo "REDIS_ADDR=${{ vars.REDIS_HOST }}:${{ vars.REDIS_PORT }}" >> \$REPO_DIR/.env
+          echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> \$REPO_DIR/.env
+          echo "REDIS_USERNAME=${{ vars.REDIS_USERNAME }}" >> \$REPO_DIR/.env
+          echo "RECORDER_ENV=${{ vars.RECORDER_ENV }}" >> \$REPO_DIR/.env
+          echo "RECORDER_SKIP_CACHE_UPDATE=${{ vars.RECORDER_SKIP_CACHE_UPDATE }}" >> \$REPO_DIR/.env
+          echo "RECORDER_SKIP_NO_PUSH=${{ vars.RECORDER_SKIP_NO_PUSH }}" >> \$REPO_DIR/.env
+          echo "RECORDER_SKIP_DB_SAVE=${{ vars.RECORDER_SKIP_DB_SAVE }}" >> \$REPO_DIR/.env
+          echo "RECORDER_ASYNC_QUEUE_SIZE=${{ vars.RECORDER_ASYNC_QUEUE_SIZE }}" >> \$REPO_DIR/.env
+          echo "RECORDER_ASYNC_WORKERS=${{ vars.RECORDER_ASYNC_WORKERS }}" >> \$REPO_DIR/.env
+          echo "RECORDER_ASYNC_DROP_ON_FULL=${{ vars.RECORDER_ASYNC_DROP_ON_FULL }}" >> \$REPO_DIR/.env
+          echo "RECORDER_API_TTL_SECONDS_DEFAULT=${{ vars.RECORDER_API_TTL_SECONDS_DEFAULT }}" >> \$REPO_DIR/.env
+          echo "RECORDER_CACHE_TTL_SECONDS_DEFAULT=${{ vars.RECORDER_CACHE_TTL_SECONDS_DEFAULT }}" >> \$REPO_DIR/.env
+          echo "RECORDER_NO_URL=${{ vars.RECORDER_NO_URL }}" >> \$REPO_DIR/.env
+          echo "RECORDER_NO_BEARER_TOKEN=${{ secrets.RECORDER_NO_BEARER_TOKEN }}" >> \$REPO_DIR/.env
+          echo "RECORDER_NO_TIMEOUT_MS=${{ vars.RECORDER_NO_TIMEOUT_MS }}" >> \$REPO_DIR/.env
+          echo "RECORDER_NO_ENABLED_ENVS=${{ vars.RECORDER_NO_ENABLED_ENVS }}" >> \$REPO_DIR/.env
+          echo "RECORDER_DB_BASE_URL=${{ vars.RECORDER_DB_BASE_URL }}" >> \$REPO_DIR/.env
+          echo "RECORDER_DB_API_KEY=${{ secrets.RECORDER_DB_API_KEY }}" >> \$REPO_DIR/.env
+          echo "RECORDER_DB_TIMEOUT_MS=${{ vars.RECORDER_DB_TIMEOUT_MS }}" >> \$REPO_DIR/.env
+          echo "RECORDER_DB_ENABLED_ENVS=${{ vars.RECORDER_DB_ENABLED_ENVS }}" >> \$REPO_DIR/.env
+          EOF
+      - name: Verify .env and docker-compose.yml files
+        run: |
+          ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
+          REPO_DIR=~/ONDC-automation-framework/automation-recorder-service
+          # Check if .env and docker-compose.yml files exist
+          if [ ! -f \$REPO_DIR/.env ]; then
+            echo ".env file not found in \$REPO_DIR!"
+            exit 1
+          fi
+          if [ ! -f \$REPO_DIR/docker-compose.yml ]; then
+            echo "docker-compose.yml file not found in \$REPO_DIR!"
+            exit 1
+          fi
+          echo ".env and docker-compose.yml files found."
+          EOF
+      - name: Automation Recorder Server Deployment
+        run: |
+          echo "Deploying with Docker Compose"
+          ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
+          REPO_DIR=~/ONDC-automation-framework/automation-recorder-service
+          cd \$REPO_DIR
+          # Ensure the .env and docker-compose.yml files exist
+          if [ ! -f .env ]; then
+            echo ".env file not found!"
+            exit 1
+          fi
+          if [ ! -f docker-compose.yml ]; then
+            echo "docker-compose.yml file not found!"
+            exit 1
+          fi
+          # Start the containers using Docker Compose
+          echo "Running docker-compose up -d --build"
+          sudo docker compose down || true
+          sudo docker compose -p automation-recorder-dev up -d --build
+          EOF
+
+      - name: Health Check
+        run: |
+          echo "Performing health check"
+          ssh -i ./key.pem ${{ secrets.SSH_USERNAME }}@${{ secrets.SSH_HOST }} <<EOF
+          echo "Waiting for service to be ready..."
+          sleep 10
+
+          # Check if containers are running
+          CONTAINERS=\$(sudo docker ps --filter "name=automation-recorder-dev" --format "{{.Names}}")
+          if [ -z "\$CONTAINERS" ]; then
+            echo "No containers running!"
+            exit 1
+          fi
+          echo "Running containers: \$CONTAINERS"
+
+          # Health check on gRPC port
+          if nc -zv localhost 8089 2>&1 | grep -q succeeded; then
+            echo "✓ gRPC service is listening on port 8089"
+          else
+            echo "✗ gRPC service is not responding on port 8089"
+            exit 1
+          fi
+
+          # Check container logs for errors
+          echo "Checking container logs..."
+          sudo docker logs automation-recorder-dev-automation-recorder-1 --tail 50
+
+          echo "Health check passed!"
+          EOF
