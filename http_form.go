@@ -20,6 +20,7 @@ func newHTTPMux(rdb *redis.Client) *http.ServeMux {
 	mux := http.NewServeMux()
 	fh := &formHandler{rdb: rdb}
 	mux.HandleFunc("/html-form", loggingMiddleware(fh.htmlForm))
+	mux.HandleFunc("/health", healthHandler)
 	return mux
 }
 
