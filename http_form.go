@@ -110,6 +110,12 @@ func (h *formHandler) htmlForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+	// set status available 
+	if err := setFlowStatusIfExists(ctx,h.rdb,transactionID,subscriberURL,"AVAILABLE",0); err != nil {
+		fmt.Printf("[FORM] ERROR: Failed to set flow status: %v\n", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 
 	fmt.Printf("[FORM] Form submitted successfully\n")
 	w.WriteHeader(http.StatusOK)
