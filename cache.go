@@ -191,6 +191,38 @@ func setFlowStatusIfExists(ctx context.Context, rdb *redis.Client, transactionID
 	return rdb.Set(ctx, key, string(b), ttl).Err()
 }
 
+func createExtraFlowStatusCacheKey(transactionID, subscriberURL, extraStepKey string) string {
+	transactionID = strings.TrimSpace(transactionID)
+	subscriberURL = strings.TrimSpace(subscriberURL)
+	extraStepKey = strings.TrimSpace(extraStepKey)
+	if transactionID == "" || subscriberURL == "" || extraStepKey == "" {
+		return ""
+	}
+	return "EXTRA_FLOW_STATUS_" + transactionID + "::" + subscriberURL + "::" + extraStepKey
+}
+
+func setExtraFlowStatusIfExists(ctx context.Context, rdb *redis.Client, transactionID, subscriberURL, extraStepKey, statusValue string, ttl time.Duration) error {
+	if rdb == nil {
+		return nil
+	}
+	key := createExtraFlowStatusCacheKey(transactionID, subscriberURL, extraStepKey)
+	if key == "" {
+		return nil
+	}
+	exists, err := rdb.Exists(ctx, key).Result()
+	if err != nil {
+		return err
+	}
+	if exists == 0 {
+		return nil
+	}
+	b, err := json.Marshal(map[string]any{"status": statusValue})
+	if err != nil {
+		return err
+	}
+	return rdb.Set(ctx, key, string(b), ttl).Err()
+}
+
 func loadTransactionMap(ctx context.Context, rdb *redis.Client, key string) (map[string]any, error) {
 	if rdb == nil || strings.TrimSpace(key) == "" {
 		return nil, nil

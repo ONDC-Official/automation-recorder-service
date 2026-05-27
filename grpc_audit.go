@@ -148,6 +148,9 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 		if err := setFlowStatusIfExists(ctx, s.rdb, derived.TransactionID, derived.SubscriberURL, "AVAILABLE", 5*time.Hour); err != nil {
 			log.Warnf(ctx, "automation-recorder: failed to set flow status: %v", err)
 		}
+		if err := setExtraFlowStatusIfExists(ctx, s.rdb, derived.TransactionID, derived.SubscriberURL, derived.Action, "AVAILABLE", 5*time.Hour); err != nil {
+			log.Warnf(ctx, "automation-recorder: failed to set extra flow status: %v", err)
+		}
 
 		log.Infof(ctx, "[GRPC] Cache updated successfully")
 	} else {
