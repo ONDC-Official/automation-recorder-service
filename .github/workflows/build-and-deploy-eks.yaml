@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - main
-      - dev
+      - release-staging
+
 permissions:
   contents: write
   packages: write
@@ -12,6 +13,7 @@ permissions:
 jobs:
   build-and-push-image:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -35,24 +37,32 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+
           current_version=$(cat version.txt)
           echo "CURRENT_VERSION=$current_version" >> $GITHUB_ENV
+
           IFS='.' read -r -a version_parts <<< "$current_version"
+
           major="${version_parts[0]}"
           minor="${version_parts[1]}"
           patch="${version_parts[2]}"
+
           patch=$((patch + 1))
+
           next_version="$major.$minor.$patch"
+
           echo "Next version: $next_version"
+
           echo "$next_version" > version.txt
           echo "VERSION=$next_version" >> $GITHUB_ENV
+
           git add version.txt
           git commit -m "ci: auto-increment version to $next_version [skip ci]"
           git push
 
       - name: Determine environment and image tag
         run: |
-          if [ "${{ github.ref_name }}" = "main" ]; then
+          if [ "${{ github.ref_name }}" = "release-staging" ]; then
             echo "ENVIRONMENT=prod" >> $GITHUB_ENV
             echo "IMAGE_TAG=prod-$next_version" >> $GITHUB_ENV
             echo "TARGET_FILE=k8/aws/helm/service-layer/values-prod.yaml" >> $GITHUB_ENV
@@ -101,12 +111,16 @@ jobs:
 
           in_recorder_service = False
           result = []
+
           for line in lines:
-              # Top-level keys have no leading whitespace — use them as section boundaries
+              # Detect top-level YAML sections
               if re.match(r'^[a-zA-Z]', line):
                   in_recorder_service = line.strip().startswith('recorderService:')
+
+              # Replace tag under recorderService
               if in_recorder_service and re.match(r'^\s+tag:\s', line):
                   line = re.sub(r'(tag:\s).*', rf'\g<1>{image_tag}', line)
+
               result.append(line)
 
           with open(target, 'w') as f:
@@ -119,8 +133,12 @@ jobs:
       - name: Commit and push tag update to IaC repo
         run: |
           cd automation-iac
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add "${{ env.TARGET_FILE }}"
-          git commit -m "ci: update automation-recorder-service image tag to ${{ env.IMAGE_TAG }} (${{ env.ENVIRONMENT }})"
+
+          git commit -m "ci: update automation-recorder-service image tag to ${{ env.IMAGE_TAG }} (${{ env.ENVIRONMENT }})" || echo "No changes to commit"
+
           git push
