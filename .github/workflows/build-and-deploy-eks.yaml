@@ -4,7 +4,9 @@ on:
   push:
     branches:
       - main
+      - draft-*
       - release-staging
+      - release-*
 
 permissions:
   contents: write
@@ -62,10 +64,10 @@ jobs:
 
       - name: Determine environment and image tag
         run: |
-          if [ "${{ github.ref_name }}" = "release-staging" ]; then
-            echo "ENVIRONMENT=prod" >> $GITHUB_ENV
+          if [[ "${{ github.ref_name }}" == release-* ]]; then
+            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
             echo "IMAGE_TAG=prod-$next_version" >> $GITHUB_ENV
-            echo "TARGET_FILE=k8/aws/helm/service-layer/values-prod.yaml" >> $GITHUB_ENV
+            echo "TARGET_FILE=k8/aws/helm/service-layer/values-staging.yaml" >> $GITHUB_ENV
           else
             echo "ENVIRONMENT=dev" >> $GITHUB_ENV
             echo "IMAGE_TAG=dev-$next_version" >> $GITHUB_ENV
@@ -141,4 +143,7 @@ jobs:
 
           git commit -m "ci: update automation-recorder-service image tag to ${{ env.IMAGE_TAG }} (${{ env.ENVIRONMENT }})" || echo "No changes to commit"
 
-          git push
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && break
+            sleep $((i * 5))
+          done

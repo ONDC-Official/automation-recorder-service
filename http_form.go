@@ -19,8 +19,9 @@ type formHandler struct {
 func newHTTPMux(rdb *redis.Client) *http.ServeMux {
 	mux := http.NewServeMux()
 	fh := &formHandler{rdb: rdb}
+	hc := &healthChecker{rdb: rdb}
 	mux.HandleFunc("/html-form", loggingMiddleware(fh.htmlForm))
-	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/health", hc.handle)
 	return mux
 }
 
