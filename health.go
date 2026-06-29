@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type HealthResponse struct {
@@ -12,14 +15,27 @@ type HealthResponse struct {
 	Service   string    `json:"service"`
 }
 
-func healthHandler(w http.ResponseWriter, r *http.Request) {
+type healthChecker struct {
+	rdb *redis.Client
+}
+
+func (hc *healthChecker) handle(w http.ResponseWriter, r *http.Request) {
+	status := "healthy"
+	if err := hc.rdb.Ping(context.Background()).Err(); err != nil {
+		status = "unhealthy"
+	}
+
 	response := HealthResponse{
-		Status:    "healthy",
+		Status:    status,
 		Timestamp: time.Now(),
 		Service:   "automation-recorder-service",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	if status == "unhealthy" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
 	json.NewEncoder(w).Encode(response)
 }
