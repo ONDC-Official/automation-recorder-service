@@ -1,6 +1,7 @@
 name: Build and Deploy to EKS
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -9,21 +10,55 @@ on:
       - release-*
 
 permissions:
-  contents: write
   packages: write
 
 jobs:
-  build-and-push-image:
+  version:
     runs-on: ubuntu-latest
-
+    outputs:
+      semver:      ${{ steps.set.outputs.semver }}
+      image_tag:   ${{ steps.set.outputs.image_tag }}
+      environment: ${{ steps.set.outputs.environment }}
+      target_file: ${{ steps.set.outputs.target_file }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set repository name to lowercase
-        run: echo "REPO_LOWER=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+      - name: Read version and compute image tag
+        id: set
+        run: |
+          SEMVER=$(tr -d '[:space:]' < version.txt)
+          [ -z "$SEMVER" ] && SEMVER="0.0.0"
+          SHORT_SHA=$(git rev-parse --short=7 HEAD)
+
+          if [[ "${{ github.ref_name }}" == release-* ]]; then
+            ENV=staging
+            TARGET="k8/aws/helm/service-layer/values-staging.yaml"
+          else
+            ENV=dev
+            TARGET="k8/aws/helm/service-layer/values.yaml"
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            IMAGE_TAG="${ENV}-${SEMVER}-${SHORT_SHA}-r${{ github.run_number }}"
+          else
+            IMAGE_TAG="${ENV}-${SEMVER}-${SHORT_SHA}"
+          fi
+
+          echo "semver=${SEMVER}"       >> $GITHUB_OUTPUT
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "environment=${ENV}"     >> $GITHUB_OUTPUT
+          echo "target_file=${TARGET}"  >> $GITHUB_OUTPUT
+
+  build-and-push:
+    needs: version
+    runs-on: ubuntu-latest
+    environment: ${{ needs.version.outputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -33,58 +68,35 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ github.token }}
 
-      - name: Auto-increment patch version
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-
-          current_version=$(cat version.txt)
-          echo "CURRENT_VERSION=$current_version" >> $GITHUB_ENV
-
-          IFS='.' read -r -a version_parts <<< "$current_version"
-
-          major="${version_parts[0]}"
-          minor="${version_parts[1]}"
-          patch="${version_parts[2]}"
-
-          patch=$((patch + 1))
-
-          next_version="$major.$minor.$patch"
-
-          echo "Next version: $next_version"
-
-          echo "$next_version" > version.txt
-          echo "VERSION=$next_version" >> $GITHUB_ENV
-
-          git add version.txt
-          git commit -m "ci: auto-increment version to $next_version [skip ci]"
-          git push
-
-      - name: Determine environment and image tag
-        run: |
-          if [[ "${{ github.ref_name }}" == release-* ]]; then
-            echo "ENVIRONMENT=staging" >> $GITHUB_ENV
-            echo "IMAGE_TAG=prod-$next_version" >> $GITHUB_ENV
-            echo "TARGET_FILE=k8/aws/helm/service-layer/values-staging.yaml" >> $GITHUB_ENV
-          else
-            echo "ENVIRONMENT=dev" >> $GITHUB_ENV
-            echo "IMAGE_TAG=dev-$next_version" >> $GITHUB_ENV
-            echo "TARGET_FILE=k8/aws/helm/service-layer/values.yaml" >> $GITHUB_ENV
-          fi
-        env:
-          next_version: ${{ env.VERSION }}
+      - name: Set image metadata
+        id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ondc-official/automation-recorder-service
+          tags: |
+            type=raw,value=${{ needs.version.outputs.image_tag }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref_name, 'release') }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.event.repository.html_url }}
+            org.opencontainers.image.version=${{ needs.version.outputs.semver }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ env.REPO_LOWER }}:${{ env.IMAGE_TAG }}
-            ghcr.io/${{ env.REPO_LOWER }}:latest
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
+  update-iac:
+    needs: [version, build-and-push]
+    runs-on: ubuntu-latest
+    steps:
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -93,7 +105,7 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           repositories: automation-iac
 
-      - name: Clone automation-iac repo
+      - name: Checkout automation-iac
         uses: actions/checkout@v4
         with:
           repository: ONDC-Official/automation-iac
@@ -107,43 +119,72 @@ jobs:
 
           target = f"automation-iac/{os.environ['TARGET_FILE']}"
           image_tag = os.environ['IMAGE_TAG']
+          expected_repository = os.environ['EXPECTED_REPOSITORY']
 
           with open(target, 'r') as f:
               lines = f.readlines()
 
-          in_recorder_service = False
+          in_service = False
+          in_image = False
+          found_service = False
+          found_repository = False
+          updated = False
           result = []
 
           for line in lines:
-              # Detect top-level YAML sections
-              if re.match(r'^[a-zA-Z]', line):
-                  in_recorder_service = line.strip().startswith('recorderService:')
+              if re.match(r'^[A-Za-z0-9_]+:\s*$', line):
+                  in_service = line.strip() == 'recorderService:'
+                  in_image = False
+                  found_service = found_service or in_service
 
-              # Replace tag under recorderService
-              if in_recorder_service and re.match(r'^\s+tag:\s', line):
+              if in_service and re.match(r'^\s{2}image:\s*$', line):
+                  in_image = True
+              elif in_service and re.match(r'^\s{2}[A-Za-z0-9_]+:\s*$', line):
+                  in_image = False
+
+              if in_service and in_image and re.match(r'^\s{4}repository:\s', line):
+                  repository = line.split(':', 1)[1].strip().strip('\'"')
+                  if repository != expected_repository:
+                      raise RuntimeError(
+                          f"recorderService.image.repository is {repository}, expected {expected_repository}"
+                      )
+                  found_repository = True
+
+              if in_service and in_image and re.match(r'^\s{4}tag:\s', line):
                   line = re.sub(r'(tag:\s).*', rf'\g<1>{image_tag}', line)
+                  updated = True
 
               result.append(line)
 
+          if not found_service:
+              raise RuntimeError(f"recorderService not found in {target}")
+          if not found_repository:
+              raise RuntimeError(f"recorderService.image.repository not found in {target}")
+          if not updated:
+              raise RuntimeError(f"recorderService.image.tag not found in {target}")
+
           with open(target, 'w') as f:
               f.writelines(result)
+
+          print(f"Updated recorderService image tag to: {image_tag}")
           PYEOF
         env:
-          TARGET_FILE: ${{ env.TARGET_FILE }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          TARGET_FILE:         ${{ needs.version.outputs.target_file }}
+          IMAGE_TAG:           ${{ needs.version.outputs.image_tag }}
+          EXPECTED_REPOSITORY: ghcr.io/ondc-official/automation-recorder-service
 
       - name: Commit and push tag update to IaC repo
         run: |
           cd automation-iac
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add "${{ env.TARGET_FILE }}"
-
-          git commit -m "ci: update automation-recorder-service image tag to ${{ env.IMAGE_TAG }} (${{ env.ENVIRONMENT }})" || echo "No changes to commit"
-
-          for i in 1 2 3; do
-            git pull --rebase origin main && git push && break
-            sleep $((i * 5))
-          done
+          git add "${{ needs.version.outputs.target_file }}"
+          if git diff --staged --quiet; then
+            echo "Image tag already up to date, skipping commit."
+          else
+            git commit -m "ci: update automation-recorder-service image tag to ${{ needs.version.outputs.image_tag }} (${{ needs.version.outputs.environment }})"
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push && break
+              sleep $((i * 5))
+            done
+          fi
