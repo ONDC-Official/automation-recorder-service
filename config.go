@@ -132,8 +132,19 @@ func newRedisClient(addr string) *redis.Client {
 	password := os.Getenv("REDIS_PASSWORD")
 	username := os.Getenv("REDIS_USERNAME")
 	fmt.Println("Connecting to Redis at", addr)
-	if username != "" {
-		return redis.NewClient(&redis.Options{Addr: addr, Username: username, Password: password, DB: 0})
+	opts := &redis.Options{
+		Addr:            addr,
+		Password:        password,
+		DB:              0,
+		MaxRetries:      10,
+		MinRetryBackoff: 100 * time.Millisecond,
+		MaxRetryBackoff: 5 * time.Second,
+		DialTimeout:     5 * time.Second,
+		ReadTimeout:     3 * time.Second,
+		WriteTimeout:    3 * time.Second,
 	}
-	return redis.NewClient(&redis.Options{Addr: addr, Password: password, DB: 0})
+	if username != "" {
+		opts.Username = username
+	}
+	return redis.NewClient(opts)
 }
