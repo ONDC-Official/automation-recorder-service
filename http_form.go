@@ -30,19 +30,19 @@ func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		ctx := r.Context()
-		
+
 		fmt.Printf("[HTTP] --> %s %s from %s\n", r.Method, r.URL.Path, r.RemoteAddr)
 		fmt.Printf("[HTTP] User-Agent: %s\n", r.UserAgent())
 		fmt.Printf("[HTTP] Content-Type: %s\n", r.Header.Get("Content-Type"))
-		
+
 		// Wrap response writer to capture status code
 		lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-		
+
 		next(lrw, r)
-		
+
 		duration := time.Since(start)
 		fmt.Printf("[HTTP] <-- %d %s (took %v)\n", lrw.statusCode, http.StatusText(lrw.statusCode), duration)
-		
+
 		if lrw.statusCode >= 400 {
 			fmt.Printf("[HTTP] ERROR: Request failed with status %d\n", lrw.statusCode)
 		}
@@ -63,7 +63,7 @@ func (lrw *loggingResponseWriter) WriteHeader(code int) {
 func (h *formHandler) htmlForm(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	fmt.Printf("[FORM] Processing form submission request\n")
-	
+
 	// Mirror Express route: POST only.
 	if r.Method != http.MethodPost {
 		fmt.Printf("[FORM] ERROR: Invalid method %s, only POST allowed\n", r.Method)
@@ -79,7 +79,7 @@ func (h *formHandler) htmlForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
 	}
-	
+
 	fmt.Printf("[FORM] Received form data with %d fields\n", len(formData))
 	_ = ctx
 
@@ -104,6 +104,7 @@ func (h *formHandler) htmlForm(w http.ResponseWriter, r *http.Request) {
 
 	errVal := formData["error"]
 
+	fmt.Printf("[FORM] Payload received for Redis key %s: %s\n", createTransactionKey(transactionID, subscriberURL), formatJSONForLog(formData))
 	fmt.Printf("[FORM] Appending form entry to Redis...\n")
 	if err := appendFormEntryAtomically(r.Context(), h.rdb, transactionID, subscriberURL, formActionID, formType, submissionID, errVal); err != nil {
 		// TS controller catches and returns 500.
@@ -111,8 +112,8 @@ func (h *formHandler) htmlForm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	// set status available 
-	if err := setFlowStatusIfExists(ctx,h.rdb,transactionID,subscriberURL,"AVAILABLE",0); err != nil {
+	// set status available
+	if err := setFlowStatusIfExists(ctx, h.rdb, transactionID, subscriberURL, "AVAILABLE", 0); err != nil {
 		fmt.Printf("[FORM] ERROR: Failed to set flow status: %v\n", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
