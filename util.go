@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
@@ -123,4 +124,12 @@ func uuidV4() (string, error) {
 	buf[23] = '-'
 	hex.Encode(buf[24:36], b[10:16])
 	return string(buf), nil
+}
+
+func formatJSONForLog(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return `{"log_error":"failed to marshal payload"}`
+	}
+	return string(b)
 }

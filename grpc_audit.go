@@ -69,7 +69,7 @@ type derivedFields struct {
 
 func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue) (*emptypb.Empty, error) {
 	log.Infof(ctx, "[GRPC] LogEvent called, payload size: %d bytes", len(in.GetValue()))
-	
+
 	if in == nil {
 		log.Errorf(ctx, nil, "[GRPC] ERROR: Request is nil")
 		return nil, status.Error(codes.InvalidArgument, "request is required")
@@ -122,6 +122,7 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 	}
 
 	if !s.cfg.SkipCacheUpdate {
+		log.Infof(ctx, "[GRPC] Payload received for Redis key %s: %s", key, formatJSONForLog(payload))
 		log.Infof(ctx, "[GRPC] Updating cache for key: %s (TTL: %v)", key, cacheTTL)
 		in := cacheAppendInput{
 			PayloadID:     derived.PayloadID,
