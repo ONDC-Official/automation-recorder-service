@@ -319,3 +319,37 @@ func TestUpdateTransactionAtomicallyRetry(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 }
+
+func TestUpdateTransactionAtomicallyInReplyTo(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	ctx := context.Background()
+
+	key := createTransactionKey("t1", "https://s")
+	seedB, _ := json.Marshal(map[string]any{"messageIds": []string{}, "apiList": []any{}})
+	if err := rdb.Set(ctx, key, string(seedB), 0).Err(); err != nil {
+		t.Fatalf("seed set: %v", err)
+	}
+
+	for _, in := range []*cacheAppendInput{
+		{TransactionID: "t1", SubscriberURL: "https://s", MessageID: "m1", Action: "application_create"},
+		{TransactionID: "t1", SubscriberURL: "https://s", MessageID: "m2", Action: "on_application_create", InReplyTo: "m1"},
+	} {
+		if err := updateTransactionAtomically(ctx, rdb, key, in, 0); err != nil {
+			t.Fatalf("update: %v", err)
+		}
+	}
+
+	val, _ := rdb.Get(ctx, key).Result()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(val), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	list := got["apiList"].([]any)
+	if _, ok := list[0].(map[string]any)["inReplyTo"]; ok {
+		t.Errorf("request entry has inReplyTo: %#v", list[0])
+	}
+	if v := list[1].(map[string]any)["inReplyTo"]; v != "m1" {
+		t.Errorf("callback inReplyTo = %#v, want m1", v)
+	}
+}
