@@ -66,6 +66,7 @@ type derivedFields struct {
 	IsMock        bool
 	SessionID     string
 	InReplyTo     string // FD: fdEnvelope.inReplyTo, the request a callback answers
+	FdReplay      bool   // FD: the workbench let a byte-identical repeat of a message through
 }
 
 func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue) (*emptypb.Empty, error) {
@@ -134,6 +135,7 @@ func (s *recorderServer) LogEvent(ctx context.Context, in *wrapperspb.BytesValue
 			TTLSecs:       derived.TTLSecs,
 			Response:      payload.ResponseBody,
 			InReplyTo:     derived.InReplyTo,
+			FdReplay:      derived.FdReplay,
 		}
 		if err := updateTransactionAtomically(ctx, s.rdb, key, &in, cacheTTL); err != nil {
 			log.Errorf(ctx, err, "[GRPC] ERROR: Cache update failed")
@@ -227,6 +229,7 @@ func deriveFields(p auditPayload) (derivedFields, error) {
 	out.IsMock = getBool(ad, "is_mock")
 	out.SessionID = getString(ad, "session_id")
 	out.InReplyTo = getString(ad, "in_reply_to")
+	out.FdReplay = getBool(ad, "fd_replay")
 
 	// Backfill from requestBody.context if not provided in additionalData.
 	ctxObj, _ := p.RequestBody["context"].(map[string]any)

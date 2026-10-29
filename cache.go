@@ -37,6 +37,7 @@ type cacheAppendInput struct {
 	TTLSecs       int64
 	Response      any
 	InReplyTo     string
+	FdReplay      bool
 }
 
 func updateTransactionAtomically(ctx context.Context, rdb *redis.Client, key string, in *cacheAppendInput, cacheTTL time.Duration) error {
@@ -126,6 +127,9 @@ func updateTransactionAtomically(ctx context.Context, rdb *redis.Client, key str
 			// message_id; keep it so pairing and reports can follow the chain.
 			if inReplyTo := strings.TrimSpace(in.InReplyTo); inReplyTo != "" {
 				apiEntry["inReplyTo"] = inReplyTo
+			}
+			if in.FdReplay {
+				apiEntry["fdReplay"] = true
 			}
 			apiList = append(apiList, apiEntry)
 			txn["apiList"] = apiList

@@ -320,7 +320,7 @@ func TestUpdateTransactionAtomicallyRetry(t *testing.T) {
 	}
 }
 
-func TestUpdateTransactionAtomicallyInReplyTo(t *testing.T) {
+func TestUpdateTransactionAtomicallyFDFields(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	ctx := context.Background()
@@ -334,6 +334,7 @@ func TestUpdateTransactionAtomicallyInReplyTo(t *testing.T) {
 	for _, in := range []*cacheAppendInput{
 		{TransactionID: "t1", SubscriberURL: "https://s", MessageID: "m1", Action: "application_create"},
 		{TransactionID: "t1", SubscriberURL: "https://s", MessageID: "m2", Action: "on_application_create", InReplyTo: "m1"},
+		{TransactionID: "t1", SubscriberURL: "https://s", MessageID: "m2", Action: "on_application_create", InReplyTo: "m1", FdReplay: true},
 	} {
 		if err := updateTransactionAtomically(ctx, rdb, key, in, 0); err != nil {
 			t.Fatalf("update: %v", err)
@@ -351,5 +352,11 @@ func TestUpdateTransactionAtomicallyInReplyTo(t *testing.T) {
 	}
 	if v := list[1].(map[string]any)["inReplyTo"]; v != "m1" {
 		t.Errorf("callback inReplyTo = %#v, want m1", v)
+	}
+	if _, ok := list[1].(map[string]any)["fdReplay"]; ok {
+		t.Errorf("first delivery flagged as a replay: %#v", list[1])
+	}
+	if v := list[2].(map[string]any)["fdReplay"]; v != true {
+		t.Errorf("replay fdReplay = %#v, want true", v)
 	}
 }
