@@ -189,6 +189,12 @@ func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *
 			"sessionId": sessionId,
 		},
 	}
+	// FD: how long the exchange took to be answered (network-observability's ctx.duration_ms,
+	// which only the FD remap sends). Stored only when present, so every other payload is
+	// unchanged; the FD report scores the participant's answer times from it.
+	if ms, ok := durationMsOf(additionalData); ok {
+		requestPayload["durationMs"] = ms
+	}
 
 	return postJSONWithAPIKey(ctx, client, payloadURL, cfg.DBAPIKey, requestPayload)
 }

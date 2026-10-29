@@ -544,3 +544,83 @@ func TestSavePayloadToDB_MatchesTSDataService(t *testing.T) {
 		t.Fatalf("httpStatus: %#v", savedPayload["httpStatus"])
 	}
 }
+
+// FD: the exchange's answer time (additionalData.duration_ms, sent only by the FD remap) is
+// stored as durationMs; a payload without it, as every Beckn one is, carries no such field.
+func TestSavePayloadToDB_DurationMsOnlyWhenPresent(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	key := createTransactionKey("t-fd", "https://np.example.com")
+	seedB, _ := json.Marshal(map[string]any{"flowId": "fd_booking", "subscriberType": "BPP", "sessionId": "s-fd"})
+	if err := rdb.Set(ctx, key, string(seedB), 0).Err(); err != nil {
+		t.Fatalf("seed set: %v", err)
+	}
+
+	var saved []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/sessions/check/"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("true"))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions/payload":
+			var p map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&p)
+			saved = append(saved, p)
+			w.WriteHeader(201)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config{
+		Env:           "test",
+		DBBaseURL:     srv.URL,
+		DBAPIKey:      "k",
+		DBTimeout:     2 * time.Second,
+		DBEnabledIn:   map[string]bool{"test": true},
+		DBSessionPath: "/api/sessions",
+		DBPayloadPath: "/api/sessions/payload",
+	}
+	requestBody := map[string]any{"context": map[string]any{"transaction_id": "t-fd", "message_id": "m-1", "action": "quote_request", "domain": "ONDC:FIS14:FD", "version": "0.1.4"}}
+	d := derivedFields{PayloadID: "pid", TransactionID: "t-fd", MessageID: "m-1", SubscriberURL: "https://np.example.com", Action: "quote_request", StatusCode: 200}
+
+	cases := []struct {
+		name           string
+		additionalData map[string]any
+		want           any // nil: no durationMs key
+	}{
+		{"present", map[string]any{"duration_ms": float64(137), "request_headers": map[string]any{"x": []any{"1"}}}, float64(137)},
+		{"zero", map[string]any{"duration_ms": float64(0)}, float64(0)},
+		{"absent", map[string]any{"request_headers": map[string]any{"x": []any{"1"}}}, nil},
+		{"no additional data", nil, nil},
+		{"unreadable", map[string]any{"duration_ms": "soon"}, nil},
+	}
+	for _, c := range cases {
+		saved = nil
+		if err := savePayloadToDB(ctx, cfg, srv.Client(), rdb, d, requestBody, map[string]any{"ok": true}, c.additionalData); err != nil {
+			t.Fatalf("%s: savePayloadToDB: %v", c.name, err)
+		}
+		if len(saved) != 1 {
+			t.Fatalf("%s: %d payloads saved, want 1", c.name, len(saved))
+		}
+		got, has := saved[0]["durationMs"]
+		if c.want == nil {
+			if has {
+				t.Fatalf("%s: durationMs = %#v, want no durationMs field", c.name, got)
+			}
+		} else if !has || got != c.want {
+			t.Fatalf("%s: durationMs = %#v (present %v), want %#v", c.name, got, has, c.want)
+		}
+		// The rest of the payload is what it always was.
+		for _, k := range []string{"messageId", "transactionId", "payloadId", "action", "bppId", "bapId", "reqHeader", "jsonRequest", "jsonResponse", "httpStatus", "flowId", "sessionDetails"} {
+			if _, ok := saved[0][k]; !ok {
+				t.Fatalf("%s: payload lost %s", c.name, k)
+			}
+		}
+		if n := len(saved[0]); (c.want == nil && n != 12) || (c.want != nil && n != 13) {
+			t.Fatalf("%s: payload has %d fields: %v", c.name, n, saved[0])
+		}
+	}
+}

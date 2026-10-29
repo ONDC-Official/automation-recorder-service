@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 )
 
@@ -186,6 +188,40 @@ func TestGetContextString(t *testing.T) {
 			result := getContextString(tt.body, tt.key)
 			if result != tt.expected {
 				t.Errorf("getContextString() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDurationMsOf(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   map[string]any
+		want    int64
+		present bool
+	}{
+		{"JSON number", map[string]any{"duration_ms": float64(137)}, 137, true},
+		{"zero is a time", map[string]any{"duration_ms": float64(0)}, 0, true},
+		{"int64", map[string]any{"duration_ms": int64(42)}, 42, true},
+		{"int", map[string]any{"duration_ms": 7}, 7, true},
+		{"json.Number", map[string]any{"duration_ms": json.Number("2500")}, 2500, true},
+		{"numeric string", map[string]any{"duration_ms": " 18 "}, 18, true},
+		{"fraction rounds", map[string]any{"duration_ms": 12.6}, 13, true},
+		{"absent", map[string]any{}, 0, false},
+		{"nil map", nil, 0, false},
+		{"null", map[string]any{"duration_ms": nil}, 0, false},
+		{"negative", map[string]any{"duration_ms": float64(-1)}, 0, false},
+		{"not a number", map[string]any{"duration_ms": "fast"}, 0, false},
+		{"NaN", map[string]any{"duration_ms": math.NaN()}, 0, false},
+		{"infinite", map[string]any{"duration_ms": math.Inf(1)}, 0, false},
+		{"bool", map[string]any{"duration_ms": true}, 0, false},
+		{"object", map[string]any{"duration_ms": map[string]any{"ms": 1}}, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := durationMsOf(tt.input)
+			if ok != tt.present || got != tt.want {
+				t.Errorf("durationMsOf() = (%v, %v), want (%v, %v)", got, ok, tt.want, tt.present)
 			}
 		})
 	}

@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -53,6 +55,46 @@ func getInt64(m map[string]any, k string) int64 {
 		}
 	}
 	return 0
+}
+
+// durationMsOf reads additionalData's duration_ms (FD: the exchange's answer time). It is
+// present only when it is a finite, non-negative number of milliseconds, given as a JSON
+// number or a numeric string; anything else (absent, null, negative, not a number) is absent,
+// so a bad value is never stored as a timing.
+func durationMsOf(m map[string]any) (int64, bool) {
+	v, ok := m["duration_ms"]
+	if !ok || v == nil {
+		return 0, false
+	}
+	var f float64
+	switch n := v.(type) {
+	case float64:
+		f = n
+	case float32:
+		f = float64(n)
+	case int:
+		f = float64(n)
+	case int64:
+		f = float64(n)
+	case json.Number:
+		parsed, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		f = parsed
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		if err != nil {
+			return 0, false
+		}
+		f = parsed
+	default:
+		return 0, false
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
+		return 0, false
+	}
+	return int64(math.Round(f)), true
 }
 
 func getBool(m map[string]any, k string) bool {
