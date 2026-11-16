@@ -188,9 +188,48 @@ func savePayloadToDB(ctx context.Context, cfg config, client *http.Client, rdb *
 		"sessionDetails": map[string]any{
 			"sessionId": sessionId,
 		},
+		// The transaction's steps so far, so db-service can keep per-flow step
+		// counts without reading saved payloads back.
+		"apiList": compactAPIList(txn),
 	}
 
 	return postJSONWithAPIKey(ctx, client, payloadURL, cfg.DBAPIKey, requestPayload)
+}
+
+// compactAPIList returns the API calls of a cached transaction, oldest first,
+// with only what step counting needs: action, message ID and ACK/NACK. Form
+// entries and full responses are left out.
+func compactAPIList(txn map[string]any) []map[string]any {
+	list, _ := txn["apiList"].([]any)
+	out := make([]map[string]any, 0, len(list))
+	for _, item := range list {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entryType := getString(entry, "entryType"); entryType != "" && entryType != "API" {
+			continue
+		}
+		action := strings.TrimSpace(getString(entry, "action"))
+		if action == "" {
+			continue
+		}
+		out = append(out, map[string]any{
+			"action":    action,
+			"messageId": strings.TrimSpace(getString(entry, "messageId")),
+			"ack":       ackStatus(entry["response"]),
+		})
+	}
+	return out
+}
+
+// ackStatus reads message.ack.status from a saved response, or "" if there is none.
+func ackStatus(response any) string {
+	body, _ := response.(map[string]any)
+	message, _ := body["message"].(map[string]any)
+	ack, _ := message["ack"].(map[string]any)
+	status, _ := ack["status"].(string)
+	return strings.ToUpper(strings.TrimSpace(status))
 }
 
 func getContextString(requestBody map[string]any, key string) string {
